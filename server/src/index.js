@@ -7,7 +7,7 @@ const submissionsRouter = require('./routes/submissions');
 const researcherRouter = require('./routes/researcher');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3003;
 const isProd = process.env.NODE_ENV === 'production';
 
 if (isProd) {
