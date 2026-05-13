@@ -4,8 +4,10 @@ const MIN_IMAGES = 10;
 
 export default function ReviewImages({ existingSubmissions, newImages, onRemove, onEdit, onConfirmSubmit, onBack, isSubmitting, submitError }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const allImages = [...existingSubmissions, ...newImages];
-  const canSubmit = allImages.length >= MIN_IMAGES;
+  const draftCount = allImages.filter(img => img.status === 'draft').length;
+  const canSubmit = draftCount > 0 && allImages.length >= MIN_IMAGES;
 
   return (
     <div className="min-h-screen bg-gray-50 pt-4 pb-8 px-4">
@@ -41,22 +43,30 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
           />
         </div>
         <p className="text-xs text-gray-600 mt-2">
-          {canSubmit
-            ? `✓ You have ${allImages.length - MIN_IMAGES} extra photo${allImages.length - MIN_IMAGES !== 1 ? 's' : ''}! Feel free to submit or add more.`
-            : `You need ${MIN_IMAGES - allImages.length} more photo${MIN_IMAGES - allImages.length !== 1 ? 's' : ''} to submit.`}
+          {draftCount > 0
+            ? canSubmit
+              ? `✓ ${draftCount} draft photo${draftCount !== 1 ? 's' : ''} ready to finalize.`
+              : `You have ${draftCount} draft photo${draftCount !== 1 ? 's' : ''}. Add ${MIN_IMAGES - allImages.length} more photo${MIN_IMAGES - allImages.length !== 1 ? 's' : ''} before finalizing.`
+            : 'All shown photos are already submitted. No action is needed.'}
         </p>
       </div>
 
       {/* Images Grid */}
       <div className="max-w-2xl mx-auto grid grid-cols-2 gap-4 mb-8">
         {allImages.map((image, index) => {
-          const isExisting = existingSubmissions.includes(image);
+          const isExisting = Boolean(existingSubmissions.find(sub => sub.imageFileId === image.imageFileId));
           const isEditable = !isExisting || image.status === 'draft';
+          const imageLabel = image.imageFilename || image.fileName || 'image.jpg';
+          const filenameMatch = imageLabel.match(/_image_(\d+)\.jpg$/i);
+          const imageNumber = filenameMatch ? filenameMatch[1] : index + 1;
 
           return (
-            <div key={image.id || image.submissionId} className="relative">
+            <div key={image.imageFileId || image.id || image.submissionId} className="relative">
               <button
-                onClick={() => setExpandedId(expandedId === (image.id || image.submissionId) ? null : (image.id || image.submissionId))}
+                onClick={() => {
+                  const imageKey = image.imageFileId || image.folderId || image.id || image.submissionId;
+                  setExpandedId(expandedId === imageKey ? null : imageKey);
+                }}
                 className="w-full aspect-square bg-gray-200 rounded-lg overflow-hidden relative group hover:opacity-75 transition"
               >
                 <img
@@ -66,13 +76,16 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
                 />
                 <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition flex items-center justify-center">
                   <div className="absolute top-2 right-2 bg-gray-900 bg-opacity-70 text-white px-2 py-1 rounded text-xs font-semibold">
-                    {index + 1}
+                    {imageNumber}
                   </div>
                   {isExisting && (
                     <div className="absolute top-2 left-2 bg-blue-600 bg-opacity-70 text-white px-2 py-1 rounded text-xs">
                       {image.status === 'submitted' ? 'Submitted' : 'Draft'}
                     </div>
                   )}
+                  <div className="absolute bottom-2 left-2 bg-black bg-opacity-60 text-white px-2 py-1 rounded text-[10px] uppercase tracking-wide">
+                    {imageLabel}
+                  </div>
                 </div>
               </button>
 
@@ -81,14 +94,14 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
                 <div className="absolute bottom-2 left-2 right-2 flex gap-1">
                   {!isExisting && (
                     <button
-                      onClick={() => onEdit(image.id)}
+                      onClick={() => onEdit(image.imageFileId)}
                       className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 text-xs font-semibold"
                     >
                       Edit
                     </button>
                   )}
                   <button
-                    onClick={() => onRemove(image.id || image.submissionId)}
+                    onClick={() => setPendingDeleteId(image.imageFileId || image.folderId || image.id || image.submissionId)}
                     className={`flex-1 rounded px-2 py-1 text-xs font-semibold ${
                       isExisting && image.status === 'submitted'
                         ? 'bg-gray-400 text-gray-700 cursor-not-allowed'
@@ -117,10 +130,11 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
             onClick={e => e.stopPropagation()}
           >
             {(() => {
-              const image = allImages.find(img => (img.id || img.submissionId) === expandedId);
-              const index = allImages.findIndex(img => (img.id || img.submissionId) === expandedId);
-              const isExisting = existingSubmissions.includes(image);
-
+              const image = allImages.find(img => (img.imageFileId || img.folderId || img.id || img.submissionId) === expandedId);
+              const isExisting = Boolean(image && existingSubmissions.find(sub => sub.imageFileId === image.imageFileId));
+              const modalLabel = image?.imageFilename || image?.fileName || '';
+              const modalNumMatch = modalLabel.match(/_image_(\d+)\.jpg$/i);
+              const modalNumber = modalNumMatch ? modalNumMatch[1] : '?';
               if (!image) {
                 return (
                   <div className="text-center text-gray-600 py-8">
@@ -144,7 +158,7 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
                     ×
                   </button>
                   <h3 className="font-semibold text-gray-900 mb-3 pr-6">
-                    Photo {index + 1} Details
+                    Photo {modalNumber} Details
                     {isExisting && (
                       <span className={`ml-2 px-2 py-1 rounded text-xs ${
                         image.status === 'submitted' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -154,6 +168,20 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
                     )}
                   </h3>
                   <div className="space-y-2 text-sm text-gray-700">
+                    <div>
+                      <p className="font-semibold text-gray-900">Drive Folder:</p>
+                      <p>{image.folderName || image.folderId}</p>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">Drive File Name:</p>
+                      <p>{image.imageFilename || image.fileName || 'image.jpg'}</p>
+                    </div>
+                    {image.imageFileId && (
+                      <div>
+                        <p className="font-semibold text-gray-900">Drive File ID:</p>
+                        <p className="break-all text-xs text-gray-600">{image.imageFileId}</p>
+                      </div>
+                    )}
                     <div>
                       <p className="font-semibold text-gray-900">Severity:</p>
                       <p>{image.severity}</p>
@@ -200,7 +228,11 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
           >
-            {isSubmitting ? 'Uploading...' : `Submit ${allImages.length} Photo${allImages.length !== 1 ? 's' : ''}`}
+            {isSubmitting
+              ? 'Finalizing...'
+              : draftCount > 0
+                ? `Finalize ${draftCount} Draft Photo${draftCount !== 1 ? 's' : ''}`
+                : 'All photos already submitted'}
           </button>
           <button
             onClick={onBack}
@@ -214,6 +246,34 @@ export default function ReviewImages({ existingSubmissions, newImages, onRemove,
 
       {/* Spacer for fixed bottom */}
       <div className="h-32" />
+
+      {pendingDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-40">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Confirm removal</h2>
+            <p className="text-sm text-gray-600 mb-6">
+              Are you sure you want to remove this photo? This will delete the draft photo from your submission.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  onRemove(pendingDeleteId);
+                  setPendingDeleteId(null);
+                }}
+                className="flex-1 py-3 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700"
+              >
+                Yes, remove it
+              </button>
+              <button
+                onClick={() => setPendingDeleteId(null)}
+                className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

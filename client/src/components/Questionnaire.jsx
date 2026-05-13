@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import RatingScale from './RatingScale';
 import { QUESTIONS, RATINGS } from '../config/questions';
 
-export default function Questionnaire({ imagePreview, onSubmit, onBack, isSubmitting, initialAnswers = {}, initialSeverity = null, initialSignificance = null, initialNotes = '' }) {
-  const [answers, setAnswers] = useState(initialAnswers);
+export default function Questionnaire({ imagePreview, onSubmit, onBack, isSubmitting, initialAnswers, initialSeverity = null, initialSignificance = null, initialNotes = '' }) {
+  const [answers, setAnswers] = useState(initialAnswers || {});
   const [severity, setSeverity] = useState(initialSeverity);
   const [significance, setSignificance] = useState(initialSignificance);
   const [notes, setNotes] = useState(initialNotes);

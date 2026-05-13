@@ -19,21 +19,23 @@ export default function ParticipantFlow({ participantId, onExit }) {
   const [submitError, setSubmitError] = useState('');
   const [resumeSeen, setResumeSeen] = useState(false);
 
+  // Function to load existing submissions
+  const loadExistingSubmissions = async () => {
+    try {
+      const res = await fetch(`/api/submissions/${participantId}`);
+      if (!res.ok) throw new Error('Failed to load previous submissions');
+      const data = await res.json();
+      setExistingSubmissions(data.submissions || []);
+    } catch (err) {
+      console.error('Error loading submissions:', err);
+      // Continue anyway - they can still take new photos
+    } finally {
+      setIsLoadingExisting(false);
+    }
+  };
+
   // Load existing submissions when component mounts
   useEffect(() => {
-    async function loadExistingSubmissions() {
-      try {
-        const res = await fetch(`/api/submissions/${participantId}`);
-        if (!res.ok) throw new Error('Failed to load previous submissions');
-        const data = await res.json();
-        setExistingSubmissions(data.submissions || []);
-      } catch (err) {
-        console.error('Error loading submissions:', err);
-        // Continue anyway - they can still take new photos
-      } finally {
-        setIsLoadingExisting(false);
-      }
-    }
     loadExistingSubmissions();
   }, [participantId]);
 
@@ -47,7 +49,11 @@ export default function ParticipantFlow({ participantId, onExit }) {
     const tempId = window.crypto?.randomUUID?.() || `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setCapturedFile(file);
     setCapturedPreview(preview);
-    setCurrentDraft({ id: tempId, file, preview, status: 'draft' });
+    // Preserve oldImageFileId so a retake during edit still replaces the original draft
+    setCurrentDraft(prev => ({
+      id: tempId, file, preview, status: 'draft',
+      oldImageFileId: prev?.oldImageFileId
+    }));
     setStep(STEP.QUESTIONS);
   }
 
@@ -84,6 +90,9 @@ export default function ParticipantFlow({ participantId, onExit }) {
     formData.append('answers', JSON.stringify(data.answers));
     formData.append('image', file, 'image.jpg');
     formData.append('status', 'draft');
+    if (currentDraft?.oldImageFileId) {
+      formData.append('oldImageFileId', currentDraft.oldImageFileId);
+    }
 
     try {
       const res = await fetch('/api/submissions', { method: 'POST', body: formData });
@@ -92,14 +101,15 @@ export default function ParticipantFlow({ participantId, onExit }) {
 
       const newImage = {
         id: result.submissionId,
-        file: file,
+        folderId: result.folderId,        imageFileId: result.imageFileId,        file: file,
         preview: URL.createObjectURL(file),
         answers: data.answers,
         severity: data.severity,
         significance: data.significance,
         notes: data.notes,
         status: 'draft',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        imageFilename: result.imageFilename || `${result.submissionId}.jpg`
       };
 
       if (currentDraft?.id) {
@@ -143,6 +153,8 @@ export default function ParticipantFlow({ participantId, onExit }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Submit failed');
 
+      setNewImages([]);
+      await loadExistingSubmissions();
       setStep(STEP.DONE);
     } catch (err) {
       setSubmitError(err.message);
@@ -151,12 +163,27 @@ export default function ParticipantFlow({ participantId, onExit }) {
     }
   }
 
-  function handleRemoveImage(imageId) {
-    setNewImages(prev => prev.filter(img => img.id !== imageId));
+  async function handleRemoveImage(imageFileId) {
+    if (!imageFileId) {
+      setNewImages(prev => prev.filter(img => img.id !== imageFileId));
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/submissions/${participantId}/${imageFileId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to delete photo');
+
+      setNewImages(prev => prev.filter(img => img.imageFileId !== imageFileId));
+      setExistingSubmissions(prev => prev.filter(img => img.imageFileId !== imageFileId));
+    } catch (err) {
+      console.error('Delete failed:', err);
+      setSubmitError(err.message);
+    }
   }
 
-  function handleEditImage(imageId) {
-    const imageToEdit = newImages.find(img => img.id === imageId);
+  function handleEditImage(imageFileId) {
+    const imageToEdit = newImages.find(img => img.imageFileId === imageFileId);
     if (!imageToEdit) return;
 
     setCapturedFile(imageToEdit.file);
@@ -164,11 +191,11 @@ export default function ParticipantFlow({ participantId, onExit }) {
     setCurrentDraft({
       ...imageToEdit,
       id: imageToEdit.id,
-      editing: true
+      oldImageFileId: imageToEdit.imageFileId  // server will rename old files to edited_*
     });
 
-    // Remove from newImages temporarily while editing
-    setNewImages(prev => prev.filter(img => img.id !== imageId));
+    // Remove from newImages while editing; restored with new entry on re-submit
+    setNewImages(prev => prev.filter(img => img.imageFileId !== imageToEdit.imageFileId));
     setStep(STEP.QUESTIONS);
   }
 
@@ -302,7 +329,6 @@ export default function ParticipantFlow({ participantId, onExit }) {
           imagePreview={capturedPreview}
           onSubmit={handleSubmit}
           onBack={() => {
-            setCurrentDraft(null);
             setStep(STEP.CAMERA);
           }}
           isSubmitting={isSubmitting}

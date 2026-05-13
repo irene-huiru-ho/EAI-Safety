@@ -116,23 +116,36 @@ function SubmissionList({ token, participant, onBack, onSelectSubmission }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const loadSubmissions = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/researcher/submissions/${participant.id}`, { headers: authHeaders(token) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load submissions');
+      setSubmissions(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [participant.id, token]);
+
   useEffect(() => {
-    fetch(`/api/researcher/submissions/${participant.id}`, { headers: authHeaders(token) })
-      .then(r => r.json())
-      .then(data => {
-        if (data.error) throw new Error(data.error);
-        setSubmissions(data);
-      })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [token, participant.id]);
+    loadSubmissions();
+  }, [loadSubmissions]);
 
   if (loading) return <LoadingSpinner label="Loading submissions..." />;
   if (error) return <ErrorMsg msg={error} />;
 
   return (
     <div>
-      <button onClick={onBack} className="text-blue-600 text-sm mb-4">← All Participants</button>
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <button onClick={onBack} className="text-blue-600 text-sm">← All Participants</button>
+        <button onClick={loadSubmissions} className="text-sm text-blue-600 underline">
+          Refresh List
+        </button>
+      </div>
       <h2 className="text-lg font-semibold mb-3">
         {participant.participantId} — {submissions.length} submission{submissions.length !== 1 ? 's' : ''}
       </h2>
@@ -142,15 +155,16 @@ function SubmissionList({ token, participant, onBack, onSelectSubmission }) {
         <div className="space-y-2">
           {submissions.map(sub => (
             <button
-              key={sub.folderId}
+              key={sub.imageFileId || sub.folderName}
               onClick={() => onSelectSubmission(sub)}
               className="w-full text-left card hover:shadow-md transition-shadow active:bg-gray-50"
             >
-              <p className="font-medium text-sm">{sub.folderName.replace('Submission_', '')}</p>
+              <p className="font-medium text-sm">{sub.folderName}</p>
               {sub.responseData && (
-                <div className="flex gap-4 mt-1 text-xs text-gray-500">
+                <div className="flex flex-wrap gap-4 mt-1 text-xs text-gray-500">
                   <span>Severity: <strong>{sub.responseData.severity}/5</strong></span>
                   <span>Significance: <strong>{sub.responseData.significance}/5</strong></span>
+                  <span>File: <strong>{sub.responseData.imageFilename || 'image.jpg'}</strong></span>
                 </div>
               )}
             </button>
@@ -181,6 +195,10 @@ function SubmissionDetail({ token, submission, onBack }) {
 
       {responseData ? (
         <div className="space-y-3">
+          <div className="rounded-2xl px-4 py-3 bg-gray-50 text-sm text-gray-600">
+            <p><span className="font-semibold">Image file:</span> {responseData.imageFilename || 'image.jpg'}</p>
+            <p><span className="font-semibold">Response file:</span> {responseData.responseFilename || 'response.json'}</p>
+          </div>
           <div className="card grid grid-cols-2 gap-4 text-center">
             <div>
               <p className="text-xs text-gray-500">Severity</p>

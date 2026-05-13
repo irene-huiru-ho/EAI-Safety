@@ -28,14 +28,42 @@ function getDriveListOptions() {
   const opts = {
     spaces: 'drive',
     includeItemsFromAllDrives: true,
-    supportsAllDrives: true
+    supportsAllDrives: true,
+    pageSize: 1000
   };
 
   if (sharedDriveId) {
     opts.driveId = sharedDriveId;
+    opts.corpora = 'drive';
   }
 
   return opts;
+}
+
+async function findFolder(parentFolderId, folderName) {
+  const driveClient = getDriveClient();
+  const query = `'${parentFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const response = await driveClient.files.list({
+    q: query,
+    fields: 'files(id, name)',
+    orderBy: 'createdTime asc',
+    ...getDriveListOptions()
+  });
+  return response.data.files.length > 0 ? response.data.files[0].id : null;
+}
+
+async function getFileId(folderId, filename) {
+  const driveClient = getDriveClient();
+  const query = `'${folderId}' in parents and name = '${filename}' and trashed = false`;
+  const response = await driveClient.files.list({
+    q: query,
+    fields: 'files(id)',
+    ...getDriveListOptions()
+  });
+  if (response.data.files.length === 0) {
+    throw new Error(`File '${filename}' not found in folder ${folderId}`);
+  }
+  return response.data.files[0].id;
 }
 
 async function getOrCreateFolder(parentFolderId, folderName) {
@@ -46,6 +74,7 @@ async function getOrCreateFolder(parentFolderId, folderName) {
   const response = await driveClient.files.list({
     q: query,
     fields: 'files(id, name)',
+    orderBy: 'createdTime asc',
     ...getDriveListOptions()
   });
 
@@ -137,6 +166,7 @@ async function getJSON(folderId, filename) {
   const response = await driveClient.files.list({
     q: query,
     fields: 'files(id)',
+    orderBy: 'createdTime desc',
     ...getDriveListOptions()
   });
 
@@ -144,7 +174,7 @@ async function getJSON(folderId, filename) {
     throw new Error(`File ${filename} not found in folder ${folderId}`);
   }
 
-  // Download the file
+  // Download the file — use the most recent version if duplicates exist
   const fileId = response.data.files[0].id;
   const downloadResponse = await driveClient.files.get({
     fileId: fileId,
@@ -154,15 +184,15 @@ async function getJSON(folderId, filename) {
 
   const fileData = downloadResponse.data;
   if (typeof fileData === 'string') {
-    return JSON.parse(fileData);
+    return { data: JSON.parse(fileData), fileId };
   }
 
   if (fileData instanceof Buffer) {
-    return JSON.parse(fileData.toString('utf8'));
+    return { data: JSON.parse(fileData.toString('utf8')), fileId };
   }
 
   if (fileData && typeof fileData === 'object') {
-    return fileData;
+    return { data: fileData, fileId };
   }
 
   throw new Error(`Unable to parse JSON response from file ${filename}`);
@@ -235,7 +265,8 @@ async function updateSummaryCSV(rootFolderId, row) {
     // Get existing content
     const existingResponse = await driveClient.files.get({
       fileId: fileId,
-      alt: 'media'
+      alt: 'media',
+      supportsAllDrives: true
     });
     const existingContent = existingResponse.data;
 
@@ -294,9 +325,9 @@ async function listParticipants(rootFolderId) {
 async function listSubmissions(participantFolderId) {
   const driveClient = getDriveClient();
 
-  const query = `'${participantFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and name contains 'Submission_' and trashed = false`;
+  // List all files in participant folder
   const response = await driveClient.files.list({
-    q: query,
+    q: `'${participantFolderId}' in parents and trashed = false`,
     fields: 'files(id, name)',
     orderBy: 'createdTime desc',
     ...getDriveListOptions()
@@ -304,21 +335,32 @@ async function listSubmissions(participantFolderId) {
 
   const submissions = [];
 
-  for (const folder of response.data.files) {
+  for (const file of response.data.files) {
+    if (!file.name.endsWith('.jpg')) continue;
+    if (file.name.startsWith('deleted_') || file.name.startsWith('edited_')) continue;
+
     try {
-      // Get response.json from each submission folder
-      const responseData = await getJSON(folder.id, 'response.json');
-      const imageUrl = await getImageUrl(await getImageFileId(folder.id, 'image.jpg'));
+      let responseFilename;
+      const match = file.name.match(/^(.+)_image_(\d+)\.jpg$/);
+      if (match) {
+        responseFilename = `${match[1]}_response_${match[2]}.json`;
+      } else {
+        // Assume draft with uuid.jpg -> uuid.json
+        responseFilename = file.name.replace('.jpg', '.json');
+      }
+
+      const { data: responseData, fileId: responseFileId } = await getJSON(participantFolderId, responseFilename);
 
       submissions.push({
-        folderName: folder.name,
-        folderId: folder.id,
-        imageFileId: await getImageFileId(folder.id, 'image.jpg'),
+        folderName: file.name,
+        folderId: participantFolderId,
+        imageFileId: file.id,
+        responseFileId,
         responseData
       });
     } catch (err) {
-      // Skip folders that don't have response.json
-      console.warn(`Skipping submission folder ${folder.id}: ${err.message}`);
+      // Skip files without matching response.json
+      console.warn(`Skipping file ${file.id}: ${err.message}`);
     }
   }
 
@@ -331,15 +373,36 @@ async function getImageFileId(folderId, filename) {
   const query = `'${folderId}' in parents and name = '${filename}' and trashed = false`;
   const response = await driveClient.files.list({
     q: query,
-    fields: 'files(id)',
+    fields: 'files(id,name)',
     ...getDriveListOptions()
   });
 
-  if (response.data.files.length === 0) {
-    throw new Error(`File ${filename} not found in folder ${folderId}`);
+  if (response.data.files.length > 0) {
+    return response.data.files[0].id;
   }
 
-  return response.data.files[0].id;
+  if (filename !== 'image.jpg') {
+    const fallbackQuery = `'${folderId}' in parents and name = 'image.jpg' and trashed = false`;
+    const fallbackResponse = await driveClient.files.list({
+      q: fallbackQuery,
+      fields: 'files(id,name)',
+      ...getDriveListOptions()
+    });
+
+    if (fallbackResponse.data.files.length > 0) {
+      return fallbackResponse.data.files[0].id;
+    }
+  }
+
+  throw new Error(`File ${filename} not found in folder ${folderId}`);
+}
+
+async function deleteFolder(folderId) {
+  const driveClient = getDriveClient();
+  await driveClient.files.delete({
+    fileId: folderId,
+    supportsAllDrives: true
+  });
 }
 
 async function getImageDownloadUrl(fileId) {
@@ -378,6 +441,7 @@ async function streamFile(fileId, res) {
 
   const contentType = downloadResponse.headers?.['content-type'] || 'application/octet-stream';
   res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', 'inline');
 
   return new Promise((resolve, reject) => {
     downloadResponse.data
@@ -409,7 +473,41 @@ async function getSummaryCSV(rootFolderId) {
   return downloadResponse.data;
 }
 
+async function renameFile(fileId, newName) {
+  const driveClient = getDriveClient();
+  await driveClient.files.update({
+    fileId,
+    requestBody: { name: newName },
+    supportsAllDrives: true
+  });
+}
+
+async function deleteFile(fileId) {
+  const driveClient = getDriveClient();
+  try {
+    await driveClient.files.delete({
+      fileId,
+      supportsAllDrives: true
+    });
+  } catch (err) {
+    if (err.code === 404 || err.response?.status === 404) return;
+    throw err;
+  }
+}
+
+async function getFileName(fileId) {
+  const driveClient = getDriveClient();
+  const response = await driveClient.files.get({
+    fileId,
+    fields: 'name',
+    supportsAllDrives: true
+  });
+  return response.data.name;
+}
+
 module.exports = {
+  findFolder,
+  getFileId,
   getOrCreateFolder,
   uploadImage,
   uploadJSON,
@@ -422,5 +520,9 @@ module.exports = {
   getJSON,
   getImageUrl,
   getImageFileId,
-  streamFile
+  deleteFolder,
+  streamFile,
+  renameFile,
+  deleteFile,
+  getFileName
 };
