@@ -2,7 +2,7 @@
   "name": "home-safety-study",
   "version": "1.0.0",
   "scripts": {
-    "build": "cd client && npm install && npm run build",
+    "build": "cd client && npm install && npm run build && cd ../server && npm install",
     "start": "NODE_ENV=production node server/src/index.js",
     "install:all": "cd client && npm install && cd ../server && npm install"
   }
