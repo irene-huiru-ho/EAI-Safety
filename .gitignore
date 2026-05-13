@@ -6,3 +6,4 @@ client/dist/
 server/google-credentials.json
 *.log
 .DS_Store
+server/box-config.json

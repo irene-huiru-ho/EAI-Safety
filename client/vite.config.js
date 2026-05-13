@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': process.env.BACKEND_URL || 'http://localhost:3003'
+      '/api': 'http://localhost:3003'
     }
   }
 });

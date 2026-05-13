@@ -1,14 +1,22 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const submissionsRouter = require('./routes/submissions');
 const researcherRouter = require('./routes/researcher');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const isProd = process.env.NODE_ENV === 'production';
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
+if (isProd) {
+  const clientDist = path.join(__dirname, '../../client/dist');
+  app.use(express.static(clientDist));
+} else {
+  app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
+}
+
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -25,6 +33,14 @@ app.post('/api/auth/login', (req, res) => {
 
 app.use('/api/submissions', submissionsRouter);
 app.use('/api/researcher', researcherRouter);
+
+// Catch-all: serve React app for any non-API route (SPA routing)
+if (isProd) {
+  const clientDist = path.join(__dirname, '../../client/dist');
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

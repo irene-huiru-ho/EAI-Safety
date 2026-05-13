@@ -9,12 +9,17 @@ const sharedDriveId = process.env.GOOGLE_DRIVE_SHARED_DRIVE_ID || null;
 function getDriveClient() {
   if (drive) return drive;
 
-  const credentialsPath = process.env.GOOGLE_CREDENTIALS_PATH;
-  if (!credentialsPath || !fs.existsSync(credentialsPath)) {
-    throw new Error(`Google credentials file not found at: ${credentialsPath}. See README for setup instructions.`);
+  let credentials;
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+  } else {
+    const credentialsPath = process.env.GOOGLE_CREDENTIALS_PATH;
+    if (!credentialsPath || !fs.existsSync(credentialsPath)) {
+      throw new Error(`Google credentials not found. Set GOOGLE_CREDENTIALS_JSON or GOOGLE_CREDENTIALS_PATH.`);
+    }
+    credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
   }
 
-  const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/drive']
